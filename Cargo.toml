@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 itertools = "0.7.11"
+failure = "0.1.3"
