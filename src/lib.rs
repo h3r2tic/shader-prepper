@@ -441,7 +441,6 @@ impl<'a, 'b, 'c> Scanner<'a, 'b, 'c> {
 
 #[cfg(test)]
 mod tests {
-    use itertools::free::join;
     use std::collections::{HashMap, HashSet};
 
     struct DummyIncludeProvider;
@@ -470,10 +469,7 @@ mod tests {
             include_provider,
         );
         scanner.process_input()?;
-        Ok(join(
-            scanner.chunks.into_iter().map(|chunk| chunk.source),
-            "",
-        ))
+        Ok(scanner.chunks.into_iter().map(|chunk| chunk.source).collect::<Vec<_>>().join(""))
     }
 
     fn test_string(s: &str, s2: &str) {

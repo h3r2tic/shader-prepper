@@ -1,12 +1,11 @@
 [package]
 name = "shader-prepper"
 description = "Shader include parser and crawler"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Tomasz Stachowiak"]
 edition = "2018"
 license = "MIT"
 repository = "https://github.com/h3r2tic/shader-prepper"
 
 [dependencies]
-itertools = "0.7.11"
 failure = "0.1.3"
