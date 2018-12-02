@@ -32,3 +32,5 @@ impl shader_prepper::IncludeProvider for FileIncludeProvider {
 
 let chunks = shader_prepper::process_file("myfile.glsl", &mut FileIncludeProvider);
 ```
+
+License: MIT
