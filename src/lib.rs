@@ -17,13 +17,12 @@
 //! # Example
 //!
 //! ```rust
-//! #[macro_use]
-//! extern crate failure;
+//! use failure;
 //!
 //! struct FileIncludeProvider;
 //! impl shader_prepper::IncludeProvider for FileIncludeProvider {
 //!     fn get_include(&mut self, path: &str) -> Result<String, failure::Error> {
-//!         std::fs::read_to_string(path).map_err(|e| format_err!("{}", e))
+//!         std::fs::read_to_string(path).map_err(|e| failure::format_err!("{}", e))
 //!     }
 //! }
 //!
