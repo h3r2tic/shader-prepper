@@ -21,14 +21,22 @@
 //!
 //! struct FileIncludeProvider;
 //! impl shader_prepper::IncludeProvider for FileIncludeProvider {
-//!     fn get_include(&mut self, path: &str) -> Result<String, failure::Error> {
-//!         std::fs::read_to_string(path).map_err(|e| failure::format_err!("{}", e))
+//! 	type IncludeContext = ();
+//!
+//!     fn get_include(
+//!         &mut self,
+//!         path: &str,
+//!         _context: &Self::IncludeContext,
+//!     ) -> Result<(String, Self::IncludeContext), failure::Error> {
+//!         std::fs::read_to_string(path)
+//!             .map_err(|e| failure::format_err!("{}", e))
+//!             .map(|res| (res, ()))
 //!     }
 //! }
 //!
 //! // ...
 //!
-//! let chunks = shader_prepper::process_file("myfile.glsl", &mut FileIncludeProvider);
+//! let chunks = shader_prepper::process_file("myfile.glsl", &mut FileIncludeProvider, ());
 //! ```
 
 #[macro_use]
@@ -76,7 +84,13 @@ pub enum PrepperError {
 
 /// User-supplied include reader
 pub trait IncludeProvider {
-    fn get_include(&mut self, path: &str) -> Result<String, Error>;
+    type IncludeContext;
+
+    fn get_include(
+        &mut self,
+        path: &str,
+        context: &Self::IncludeContext,
+    ) -> Result<(String, Self::IncludeContext), Error>;
 }
 
 /// Chunk of source code along with information pointing back at the origin
@@ -95,12 +109,19 @@ pub struct SourceChunk {
 /// Process a single file, and then any code recursively referenced.
 ///
 /// `include_provider` is used to read all of the files, including the one at `file_path`.
-pub fn process_file(
+pub fn process_file<IncludeContext>(
     file_path: &str,
-    include_provider: &mut dyn IncludeProvider,
+    include_provider: &mut dyn IncludeProvider<IncludeContext = IncludeContext>,
+    include_context: IncludeContext,
 ) -> Result<Vec<SourceChunk>, Error> {
     let mut prior_includes = HashSet::new();
-    let mut scanner = Scanner::new("", String::new(), &mut prior_includes, include_provider);
+    let mut scanner = Scanner::new(
+        "",
+        String::new(),
+        &mut prior_includes,
+        include_provider,
+        include_context,
+    );
     scanner.include_child(file_path, 1)?;
     Ok(scanner.chunks)
 }
@@ -132,8 +153,9 @@ where
 }
 
 // Inspired by JayKickliter/monkey
-struct Scanner<'a, 'b, 'c> {
-    include_provider: &'b mut dyn IncludeProvider,
+struct Scanner<'a, 'b, 'c, IncludeContext> {
+    include_provider: &'b mut dyn IncludeProvider<IncludeContext = IncludeContext>,
+    include_context: IncludeContext,
     input_iter: Peekable<LocationTracking<Chars<'a>>>,
     this_file: String,
     prior_includes: &'c mut HashSet<String>,
@@ -142,15 +164,17 @@ struct Scanner<'a, 'b, 'c> {
     current_chunk_first_line: u32,
 }
 
-impl<'a, 'b, 'c> Scanner<'a, 'b, 'c> {
+impl<'a, 'b, 'c, IncludeContext> Scanner<'a, 'b, 'c, IncludeContext> {
     fn new(
         input: &'a str,
         this_file: String,
         prior_includes: &'c mut HashSet<String>,
-        include_provider: &'b mut dyn IncludeProvider,
-    ) -> Scanner<'a, 'b, 'c> {
+        include_provider: &'b mut dyn IncludeProvider<IncludeContext = IncludeContext>,
+        include_context: IncludeContext,
+    ) -> Scanner<'a, 'b, 'c, IncludeContext> {
         Scanner {
             include_provider,
+            include_context,
             input_iter: LocationTracking {
                 iter: input.chars(),
                 line: 1,
@@ -350,12 +374,13 @@ impl<'a, 'b, 'c> Scanner<'a, 'b, 'c> {
 
         self.flush_current_chunk();
 
-        let child_code = self.include_provider.get_include(path).map_err(|e| {
-            PrepperError::IncludeProviderError {
+        let (child_code, child_include_context) = self
+            .include_provider
+            .get_include(path, &self.include_context)
+            .map_err(|e| PrepperError::IncludeProviderError {
                 file: path.to_string(),
                 cause: e,
-            }
-        })?;
+            })?;
 
         self.prior_includes.insert(path.to_string());
 
@@ -365,6 +390,7 @@ impl<'a, 'b, 'c> Scanner<'a, 'b, 'c> {
                 path.to_string(),
                 &mut self.prior_includes,
                 self.include_provider,
+                child_include_context,
             );
             child_scanner.process_input()?;
             child_scanner.chunks
@@ -445,21 +471,34 @@ mod tests {
 
     struct DummyIncludeProvider;
     impl crate::IncludeProvider for DummyIncludeProvider {
-        fn get_include(&mut self, path: &str) -> Result<String, crate::Error> {
-            Ok(String::from("[") + path + "]")
+        type IncludeContext = ();
+
+        fn get_include(
+            &mut self,
+            path: &str,
+            _context: &Self::IncludeContext,
+        ) -> Result<(String, Self::IncludeContext), crate::Error> {
+            Ok((String::from("[") + path + "]", ()))
         }
     }
 
     struct HashMapIncludeProvider(HashMap<String, String>);
     impl crate::IncludeProvider for HashMapIncludeProvider {
-        fn get_include(&mut self, path: &str) -> Result<String, crate::Error> {
-            Ok(self.0.get(path).unwrap().clone())
+        type IncludeContext = ();
+
+        fn get_include(
+            &mut self,
+            path: &str,
+            _context: &Self::IncludeContext,
+        ) -> Result<(String, Self::IncludeContext), crate::Error> {
+            Ok((self.0.get(path).unwrap().clone(), ()))
         }
     }
 
-    fn preprocess_into_string(
+    fn preprocess_into_string<IncludeContext>(
         s: &str,
-        include_provider: &mut crate::IncludeProvider,
+        include_provider: &mut crate::IncludeProvider<IncludeContext = IncludeContext>,
+        include_context: IncludeContext,
     ) -> Result<String, crate::PrepperError> {
         let mut prior_includes = HashSet::new();
         let mut scanner = crate::Scanner::new(
@@ -467,13 +506,19 @@ mod tests {
             "no-file".to_string(),
             &mut prior_includes,
             include_provider,
+            include_context,
         );
         scanner.process_input()?;
-        Ok(scanner.chunks.into_iter().map(|chunk| chunk.source).collect::<Vec<_>>().join(""))
+        Ok(scanner
+            .chunks
+            .into_iter()
+            .map(|chunk| chunk.source)
+            .collect::<Vec<_>>()
+            .join(""))
     }
 
     fn test_string(s: &str, s2: &str) {
-        match preprocess_into_string(s, &mut DummyIncludeProvider) {
+        match preprocess_into_string(s, &mut DummyIncludeProvider, ()) {
             Ok(r) => assert_eq!(r, s2.to_string()),
             val @ _ => panic!("{:?}", val),
         };
@@ -533,7 +578,7 @@ mod tests {
 
     #[test]
     fn multi_line_include() {
-        match preprocess_into_string("#inc\\\nlude", &mut DummyIncludeProvider) {
+        match preprocess_into_string("#inc\\\nlude", &mut DummyIncludeProvider, ()) {
             Err(crate::PrepperError::ParseError { file: _, line: 1 }) => (),
             _ => panic!(),
         }
@@ -560,16 +605,16 @@ mod tests {
         );
 
         assert_eq!(
-            preprocess_into_string("#include <bar>", &mut include_provider).unwrap(),
+            preprocess_into_string("#include <bar>", &mut include_provider, ()).unwrap(),
             "int bar;"
         );
         assert_eq!(
-            preprocess_into_string("#include <foo>", &mut include_provider).unwrap(),
+            preprocess_into_string("#include <foo>", &mut include_provider, ()).unwrap(),
             "double rainbow;\nint bar;\nint spam;\nint baz;\nvoid ham();"
         );
 
         assert_eq!(
-            crate::process_file("foo", &mut include_provider).unwrap(),
+            crate::process_file("foo", &mut include_provider, ()).unwrap(),
             vec![
                 crate::SourceChunk {
                     file: "foo".to_string(),
@@ -602,17 +647,17 @@ mod tests {
 
     #[test]
     fn include_err() {
-        match preprocess_into_string("#include", &mut DummyIncludeProvider) {
+        match preprocess_into_string("#include", &mut DummyIncludeProvider, ()) {
             Err(crate::PrepperError::ParseError { file: _, line: 1 }) => (),
             val @ _ => panic!("{:?}", val),
         }
 
-        match preprocess_into_string("#include @", &mut DummyIncludeProvider) {
+        match preprocess_into_string("#include @", &mut DummyIncludeProvider, ()) {
             Err(crate::PrepperError::ParseError { file: _, line: 1 }) => (),
             val @ _ => panic!("{:?}", val),
         }
 
-        match preprocess_into_string("#include <foo", &mut DummyIncludeProvider) {
+        match preprocess_into_string("#include <foo", &mut DummyIncludeProvider, ()) {
             Err(crate::PrepperError::ParseError { file: _, line: 1 }) => (),
             val @ _ => panic!("{:?}", val),
         }
@@ -628,7 +673,7 @@ mod tests {
             .collect(),
         );
 
-        match &preprocess_into_string("#include <foo>", &mut recursive_include_provider) {
+        match &preprocess_into_string("#include <foo>", &mut recursive_include_provider, ()) {
             Err(crate::PrepperError::RecursiveInclude {
                 file: fname @ _,
                 from: fsrc @ _,
@@ -640,13 +685,21 @@ mod tests {
 
     struct FileIncludeProvider;
     impl crate::IncludeProvider for FileIncludeProvider {
-        fn get_include(&mut self, path: &str) -> Result<String, failure::Error> {
-            std::fs::read_to_string(path).map_err(|e| format_err!("{}", e))
+        type IncludeContext = ();
+
+        fn get_include(
+            &mut self,
+            path: &str,
+            _context: &Self::IncludeContext,
+        ) -> Result<(String, Self::IncludeContext), failure::Error> {
+            std::fs::read_to_string(path)
+                .map_err(|e| failure::format_err!("{}", e))
+                .map(|res| (res, ()))
         }
     }
 
     #[test]
     fn include_file() {
-        assert!(preprocess_into_string("src/lib.rs", &mut FileIncludeProvider).is_ok());
+        assert!(preprocess_into_string("src/lib.rs", &mut FileIncludeProvider, ()).is_ok());
     }
 }

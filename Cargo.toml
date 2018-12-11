@@ -2,7 +2,7 @@
 name = "shader-prepper"
 description = "Shader include parser and crawler"
 readme = "README.md"
-version = "0.1.2"
+version = "0.2.0"
 authors = ["Tomasz Stachowiak"]
 edition = "2018"
 license = "MIT"
