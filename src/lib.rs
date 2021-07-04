@@ -39,33 +39,21 @@
 //! let chunks = shader_prepper::process_file("myfile.glsl", &mut FileIncludeProvider, ());
 //! ```
 
-#[macro_use]
-extern crate failure;
-
 use std::collections::HashSet;
 use std::iter::Peekable;
 use std::str::Chars;
 
-use failure::Error;
+use anyhow::Error;
+use thiserror::Error;
 
-#[derive(Debug, Fail)]
+#[derive(Debug, Error)]
 pub enum PrepperError {
     /// Any error reported by the user-supplied `IncludeProvider`
-    #[fail(
-        display = "include provider error: \"{}\" when trying to include {}",
-        cause, file
-    )]
-    IncludeProviderError {
-        file: String,
-        #[cause]
-        cause: Error,
-    },
+    #[error("include provider error: \"{cause:?}\" when trying to include {file:?}")]
+    IncludeProviderError { file: String, cause: Error },
 
     /// Recursively included file, along with information about where it was encountered
-    #[fail(
-        display = "file {} is recursively included; triggered in {} ({})",
-        file, from, from_line
-    )]
+    #[error("file {file:?} is recursively included; triggered in {from:?} ({from_line:?})")]
     RecursiveInclude {
         /// File which was included recursively
         file: String,
@@ -78,7 +66,7 @@ pub enum PrepperError {
     },
 
     /// Error parsing an include directive
-    #[fail(display = "parse error: {} ({})", file, line)]
+    #[error("parse error: {file:?} ({line:?})")]
     ParseError { file: String, line: usize },
 }
 
