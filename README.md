@@ -1,4 +1,7 @@
-# shader-prepper
+# :goggles: shader-prepper
+
+[![Crates.io](https://img.shields.io/crates/v/shader-prepper.svg)](https://crates.io/crates/shader-prepper)
+[![Docs](https://docs.rs/shader-prepper/badge.svg)](https://docs.rs/shader-prepper)
 
 **shader-prepper** is a shader include parser and crawler. It is mostly aimed at GLSL
 which doesn't provide include directive support out of the box.
@@ -19,18 +22,22 @@ the original code.
 ## Example
 
 ```rust
-use failure;
-
 struct FileIncludeProvider;
 impl shader_prepper::IncludeProvider for FileIncludeProvider {
-    fn get_include(&mut self, path: &str) -> Result<String, failure::Error> {
-        std::fs::read_to_string(path).map_err(|e| failure::format_err!("{}", e))
+    type IncludeContext = ();
+
+    fn get_include(
+        &mut self,
+        path: &str,
+        _context: &Self::IncludeContext,
+    ) -> Result<(String, Self::IncludeContext), crate::BoxedIncludeProviderError> {
+        Ok((std::fs::read_to_string(path)?, ()))
     }
 }
 
 // ...
 
-let chunks = shader_prepper::process_file("myfile.glsl", &mut FileIncludeProvider);
+let chunks = shader_prepper::process_file("myfile.glsl", &mut FileIncludeProvider, ());
 ```
 
 License: MIT
