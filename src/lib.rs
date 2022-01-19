@@ -17,20 +17,17 @@
 //! # Example
 //!
 //! ```rust
-//! use failure;
 //!
 //! struct FileIncludeProvider;
 //! impl shader_prepper::IncludeProvider for FileIncludeProvider {
-//! 	type IncludeContext = ();
+//!     type IncludeContext = ();
 //!
 //!     fn get_include(
 //!         &mut self,
 //!         path: &str,
 //!         _context: &Self::IncludeContext,
-//!     ) -> Result<(String, Self::IncludeContext), failure::Error> {
-//!         std::fs::read_to_string(path)
-//!             .map_err(|e| failure::format_err!("{}", e))
-//!             .map(|res| (res, ()))
+//!     ) -> Result<(String, Self::IncludeContext), shader_prepper::BoxedIncludeProviderError> {
+//!         Ok((std::fs::read_to_string(path)?, ()))
 //!     }
 //! }
 //!
@@ -43,14 +40,16 @@ use std::collections::HashSet;
 use std::iter::Peekable;
 use std::str::Chars;
 
-use anyhow::Error;
-use thiserror::Error;
+pub type BoxedIncludeProviderError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum PrepperError {
     /// Any error reported by the user-supplied `IncludeProvider`
     #[error("include provider error: \"{cause:?}\" when trying to include {file:?}")]
-    IncludeProviderError { file: String, cause: Error },
+    IncludeProviderError {
+        file: String,
+        cause: BoxedIncludeProviderError,
+    },
 
     /// Recursively included file, along with information about where it was encountered
     #[error("file {file:?} is recursively included; triggered in {from:?} ({from_line:?})")]
@@ -78,7 +77,7 @@ pub trait IncludeProvider {
         &mut self,
         path: &str,
         context: &Self::IncludeContext,
-    ) -> Result<(String, Self::IncludeContext), Error>;
+    ) -> Result<(String, Self::IncludeContext), BoxedIncludeProviderError>;
 }
 
 /// Chunk of source code along with information pointing back at the origin
@@ -101,7 +100,7 @@ pub fn process_file<IncludeContext>(
     file_path: &str,
     include_provider: &mut dyn IncludeProvider<IncludeContext = IncludeContext>,
     include_context: IncludeContext,
-) -> Result<Vec<SourceChunk>, Error> {
+) -> Result<Vec<SourceChunk>, BoxedIncludeProviderError> {
     let mut prior_includes = HashSet::new();
     let mut scanner = Scanner::new(
         "",
@@ -376,7 +375,7 @@ impl<'a, 'b, 'c, IncludeContext> Scanner<'a, 'b, 'c, IncludeContext> {
             let mut child_scanner = Scanner::new(
                 &child_code,
                 path.to_string(),
-                &mut self.prior_includes,
+                self.prior_includes,
                 self.include_provider,
                 child_include_context,
             );
@@ -465,7 +464,7 @@ mod tests {
             &mut self,
             path: &str,
             _context: &Self::IncludeContext,
-        ) -> Result<(String, Self::IncludeContext), crate::Error> {
+        ) -> Result<(String, Self::IncludeContext), crate::BoxedIncludeProviderError> {
             Ok((String::from("[") + path + "]", ()))
         }
     }
@@ -478,14 +477,14 @@ mod tests {
             &mut self,
             path: &str,
             _context: &Self::IncludeContext,
-        ) -> Result<(String, Self::IncludeContext), crate::Error> {
+        ) -> Result<(String, Self::IncludeContext), crate::BoxedIncludeProviderError> {
             Ok((self.0.get(path).unwrap().clone(), ()))
         }
     }
 
     fn preprocess_into_string<IncludeContext>(
         s: &str,
-        include_provider: &mut crate::IncludeProvider<IncludeContext = IncludeContext>,
+        include_provider: &mut dyn crate::IncludeProvider<IncludeContext = IncludeContext>,
         include_context: IncludeContext,
     ) -> Result<String, crate::PrepperError> {
         let mut prior_includes = HashSet::new();
@@ -679,10 +678,8 @@ mod tests {
             &mut self,
             path: &str,
             _context: &Self::IncludeContext,
-        ) -> Result<(String, Self::IncludeContext), failure::Error> {
-            std::fs::read_to_string(path)
-                .map_err(|e| failure::format_err!("{}", e))
-                .map(|res| (res, ()))
+        ) -> Result<(String, Self::IncludeContext), crate::BoxedIncludeProviderError> {
+            Ok((std::fs::read_to_string(path)?, ()))
         }
     }
 

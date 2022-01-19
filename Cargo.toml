@@ -9,6 +9,7 @@ license = "MIT"
 repository = "https://github.com/h3r2tic/shader-prepper"
 
 [dependencies]
-anyhow = "1.0"
 thiserror = "1.0"
 
+[dev-dependencies]
+anyhow = "1.0"
