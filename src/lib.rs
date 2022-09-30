@@ -58,11 +58,11 @@ pub use {error::*, include_provider::*, source_chunk::*};
 /// Process a single file, and then any code recursively referenced.
 ///
 /// `include_provider` is used to read all of the files, including the one at `file_path`.
-pub fn process_file<IncludeContext>(
+pub fn process_file<IncludeContext: Clone>(
     file_path: &str,
     include_provider: &mut dyn IncludeProvider<IncludeContext = IncludeContext>,
     include_context: IncludeContext,
-) -> Result<Vec<SourceChunk>, BoxedIncludeProviderError> {
+) -> Result<Vec<SourceChunk<IncludeContext>>, BoxedIncludeProviderError> {
     let mut prior_includes = HashSet::new();
     let mut scanner = Scanner::new(
         "",

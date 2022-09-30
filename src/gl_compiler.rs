@@ -93,12 +93,13 @@ pub struct ShaderCompilerOutput<Artifact> {
 ///
 /// `compiler_fn` is a function which, given a list of source strings
 /// (which this function generates from `source_chunks`), creates a `ShaderCompilerOutput`.
-pub fn compile_shader<'chunk, ChunksIter, Artifact, CompilerFn>(
+pub fn compile_shader<'chunk, ChunksIter, Artifact, CompilerFn, IncludeContext>(
     source_chunks: ChunksIter,
     compiler_fn: CompilerFn,
 ) -> ShaderCompilerOutput<Artifact>
 where
-    ChunksIter: Iterator<Item = &'chunk crate::source_chunk::SourceChunk>,
+    ChunksIter: Iterator<Item = &'chunk crate::source_chunk::SourceChunk<IncludeContext>>,
+    IncludeContext: 'chunk,
     CompilerFn: Fn(&[String]) -> ShaderCompilerOutput<Artifact>,
 {
     struct FileAndLineOffset {

@@ -26,7 +26,7 @@ impl crate::IncludeProvider for HashMapIncludeProvider {
     }
 }
 
-fn preprocess_into_string<IncludeContext>(
+fn preprocess_into_string<IncludeContext: Clone>(
     s: &str,
     include_provider: &mut dyn crate::IncludeProvider<IncludeContext = IncludeContext>,
     include_context: IncludeContext,
@@ -51,7 +51,7 @@ fn preprocess_into_string<IncludeContext>(
 fn test_string(s: &str, s2: &str) {
     match preprocess_into_string(s, &mut DummyIncludeProvider, ()) {
         Ok(r) => assert_eq!(r, s2.to_string()),
-        val @ _ => panic!("{:?}", val),
+        val => panic!("{:?}", val),
     };
 }
 
@@ -150,27 +150,32 @@ fn multi_level_include() {
             crate::SourceChunk {
                 file: "foo".to_string(),
                 line_offset: 0,
-                source: "double rainbow;\n".to_string()
+                source: "double rainbow;\n".to_string(),
+                context: (),
             },
             crate::SourceChunk {
                 file: "bar".to_string(),
                 line_offset: 0,
-                source: "int bar;".to_string()
+                source: "int bar;".to_string(),
+                context: (),
             },
             crate::SourceChunk {
                 file: "foo".to_string(),
                 line_offset: 1,
-                source: "\nint spam;\n".to_string()
+                source: "\nint spam;\n".to_string(),
+                context: (),
             },
             crate::SourceChunk {
                 file: "baz".to_string(),
                 line_offset: 0,
-                source: "int baz;".to_string()
+                source: "int baz;".to_string(),
+                context: (),
             },
             crate::SourceChunk {
                 file: "foo".to_string(),
                 line_offset: 3,
-                source: "\nvoid ham();".to_string()
+                source: "\nvoid ham();".to_string(),
+                context: (),
             },
         ]
     );
@@ -180,17 +185,17 @@ fn multi_level_include() {
 fn include_err() {
     match preprocess_into_string("#include", &mut DummyIncludeProvider, ()) {
         Err(crate::PrepperError::ParseError { file: _, line: 1 }) => (),
-        val @ _ => panic!("{:?}", val),
+        val => panic!("{:?}", val),
     }
 
     match preprocess_into_string("#include @", &mut DummyIncludeProvider, ()) {
         Err(crate::PrepperError::ParseError { file: _, line: 1 }) => (),
-        val @ _ => panic!("{:?}", val),
+        val => panic!("{:?}", val),
     }
 
     match preprocess_into_string("#include <foo", &mut DummyIncludeProvider, ()) {
         Err(crate::PrepperError::ParseError { file: _, line: 1 }) => (),
-        val @ _ => panic!("{:?}", val),
+        val => panic!("{:?}", val),
     }
 
     let mut recursive_include_provider = HashMapIncludeProvider(
@@ -206,11 +211,11 @@ fn include_err() {
 
     match &preprocess_into_string("#include <foo>", &mut recursive_include_provider, ()) {
         Err(crate::PrepperError::RecursiveInclude {
-            file: fname @ _,
-            from: fsrc @ _,
+            file: fname,
+            from: fsrc,
             from_line: 1,
         }) if fname == "foo" && fsrc == "baz" => (),
-        val @ _ => panic!("{:?}", val),
+        val => panic!("{:?}", val),
     }
 }
 

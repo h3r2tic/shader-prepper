@@ -37,12 +37,15 @@ pub struct Scanner<'a, 'b, 'c, IncludeContext> {
     input_iter: Peekable<LocationTracking<Chars<'a>>>,
     this_file: String,
     prior_includes: &'c mut HashSet<String>,
-    chunks: Vec<SourceChunk>,
+    chunks: Vec<SourceChunk<IncludeContext>>,
     current_chunk: String,
     current_chunk_first_line: u32,
 }
 
-impl<'a, 'b, 'c, IncludeContext> Scanner<'a, 'b, 'c, IncludeContext> {
+impl<'a, 'b, 'c, IncludeContext> Scanner<'a, 'b, 'c, IncludeContext>
+where
+    IncludeContext: Clone,
+{
     pub fn new(
         input: &'a str,
         this_file: String,
@@ -66,7 +69,7 @@ impl<'a, 'b, 'c, IncludeContext> Scanner<'a, 'b, 'c, IncludeContext> {
         }
     }
 
-    pub fn into_chunks(self) -> Vec<SourceChunk> {
+    pub fn into_chunks(self) -> Vec<SourceChunk<IncludeContext>> {
         self.chunks
     }
 
@@ -236,6 +239,7 @@ impl<'a, 'b, 'c, IncludeContext> Scanner<'a, 'b, 'c, IncludeContext> {
                 file: self.this_file.clone(),
                 line_offset: (self.current_chunk_first_line - 1) as usize,
                 source: self.current_chunk.clone(),
+                context: self.include_context.clone(),
             });
             self.current_chunk.clear();
         }
