@@ -1,15 +1,28 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::ResolvedIncludePath;
+
 struct DummyIncludeProvider;
 impl crate::IncludeProvider for DummyIncludeProvider {
     type IncludeContext = ();
 
-    fn get_include(
-        &mut self,
+    fn resolve_path(
+        &self,
         path: &str,
         _context: &Self::IncludeContext,
-    ) -> Result<(String, Self::IncludeContext), crate::BoxedIncludeProviderError> {
-        Ok((String::from("[") + path + "]", ()))
+    ) -> Result<crate::ResolvedInclude<Self::IncludeContext>, crate::BoxedIncludeProviderError>
+    {
+        Ok(crate::ResolvedInclude {
+            resolved_path: crate::ResolvedIncludePath(path.to_owned()),
+            context: (),
+        })
+    }
+
+    fn get_include(
+        &mut self,
+        resolved: &ResolvedIncludePath,
+    ) -> Result<String, crate::BoxedIncludeProviderError> {
+        Ok(format!("[{}]", resolved.0))
     }
 }
 
@@ -17,12 +30,23 @@ struct HashMapIncludeProvider(HashMap<String, String>);
 impl crate::IncludeProvider for HashMapIncludeProvider {
     type IncludeContext = ();
 
-    fn get_include(
-        &mut self,
+    fn resolve_path(
+        &self,
         path: &str,
         _context: &Self::IncludeContext,
-    ) -> Result<(String, Self::IncludeContext), crate::BoxedIncludeProviderError> {
-        Ok((self.0.get(path).unwrap().clone(), ()))
+    ) -> Result<crate::ResolvedInclude<Self::IncludeContext>, crate::BoxedIncludeProviderError>
+    {
+        Ok(crate::ResolvedInclude {
+            resolved_path: crate::ResolvedIncludePath(path.to_owned()),
+            context: (),
+        })
+    }
+
+    fn get_include(
+        &mut self,
+        resolved: &ResolvedIncludePath,
+    ) -> Result<String, crate::BoxedIncludeProviderError> {
+        Ok(self.0.get(&resolved.0).unwrap().clone())
     }
 }
 
@@ -32,10 +56,13 @@ fn preprocess_into_string<IncludeContext: Clone>(
     include_context: IncludeContext,
 ) -> Result<String, crate::PrepperError> {
     let mut prior_includes = HashSet::new();
+    let mut skip_includes = HashSet::new();
+
     let mut scanner = crate::Scanner::new(
         s,
         "no-file".to_string(),
         &mut prior_includes,
+        &mut skip_includes,
         include_provider,
         include_context,
     );
@@ -182,6 +209,26 @@ fn multi_level_include() {
 }
 
 #[test]
+fn pragma_once() {
+    let mut recursive_include_provider = HashMapIncludeProvider(
+        [
+            ("foo", "#pragma once\nthis_is_foo"),
+            ("bar", "#include <foo>\n#include <foo>\n#include <foo>"),
+        ]
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect(),
+    );
+
+    assert_eq!(
+        preprocess_into_string("#include <bar>", &mut recursive_include_provider, ())
+            .unwrap()
+            .trim(),
+        "this_is_foo"
+    );
+}
+
+#[test]
 fn include_err() {
     match preprocess_into_string("#include", &mut DummyIncludeProvider, ()) {
         Err(crate::PrepperError::ParseError { file: _, line: 1 }) => (),
@@ -223,12 +270,23 @@ struct FileIncludeProvider;
 impl crate::IncludeProvider for FileIncludeProvider {
     type IncludeContext = ();
 
-    fn get_include(
-        &mut self,
+    fn resolve_path(
+        &self,
         path: &str,
         _context: &Self::IncludeContext,
-    ) -> Result<(String, Self::IncludeContext), crate::BoxedIncludeProviderError> {
-        Ok((std::fs::read_to_string(path)?, ()))
+    ) -> Result<crate::ResolvedInclude<Self::IncludeContext>, crate::BoxedIncludeProviderError>
+    {
+        Ok(crate::ResolvedInclude {
+            resolved_path: crate::ResolvedIncludePath(path.to_owned()),
+            context: (),
+        })
+    }
+
+    fn get_include(
+        &mut self,
+        resolved: &ResolvedIncludePath,
+    ) -> Result<String, crate::BoxedIncludeProviderError> {
+        Ok(std::fs::read_to_string(&resolved.0)?)
     }
 }
 

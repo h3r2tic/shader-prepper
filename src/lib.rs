@@ -22,12 +22,23 @@
 //! impl shader_prepper::IncludeProvider for FileIncludeProvider {
 //!     type IncludeContext = ();
 //!
-//!     fn get_include(
-//!         &mut self,
+//!     fn resolve_path(
+//!         &self,
 //!         path: &str,
 //!         _context: &Self::IncludeContext,
-//!     ) -> Result<(String, Self::IncludeContext), shader_prepper::BoxedIncludeProviderError> {
-//!         Ok((std::fs::read_to_string(path)?, ()))
+//!     ) -> Result<shader_prepper::ResolvedInclude<Self::IncludeContext>, shader_prepper::BoxedIncludeProviderError>
+//!     {
+//!         Ok(shader_prepper::ResolvedInclude {
+//!             resolved_path: shader_prepper::ResolvedIncludePath(path.to_owned()),
+//!             context: (),
+//!         })
+//!     }
+//!
+//!     fn get_include(
+//!         &mut self,
+//!         resolved: &shader_prepper::ResolvedIncludePath,
+//!     ) -> Result<String, shader_prepper::BoxedIncludeProviderError> {
+//!         Ok(std::fs::read_to_string(&resolved.0)?)
 //!     }
 //! }
 //!
@@ -64,10 +75,13 @@ pub fn process_file<IncludeContext: Clone>(
     include_context: IncludeContext,
 ) -> Result<Vec<SourceChunk<IncludeContext>>, BoxedIncludeProviderError> {
     let mut prior_includes = HashSet::new();
+    let mut skip_includes = HashSet::new();
+
     let mut scanner = Scanner::new(
         "",
         String::new(),
         &mut prior_includes,
+        &mut skip_includes,
         include_provider,
         include_context,
     );

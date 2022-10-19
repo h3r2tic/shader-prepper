@@ -30,29 +30,33 @@ where
     }
 }
 
+type ResolvedPathString = String;
+
 // Inspired by JayKickliter/monkey
-pub struct Scanner<'a, 'b, 'c, IncludeContext> {
-    include_provider: &'b mut dyn IncludeProvider<IncludeContext = IncludeContext>,
+pub struct Scanner<'input, 'provider, 'state, IncludeContext> {
+    include_provider: &'provider mut dyn IncludeProvider<IncludeContext = IncludeContext>,
     include_context: IncludeContext,
-    input_iter: Peekable<LocationTracking<Chars<'a>>>,
-    this_file: String,
-    prior_includes: &'c mut HashSet<String>,
+    input_iter: Peekable<LocationTracking<Chars<'input>>>,
+    this_file: ResolvedPathString,
+    prior_includes: &'state mut HashSet<ResolvedPathString>,
+    skip_includes: &'state mut HashSet<ResolvedPathString>,
     chunks: Vec<SourceChunk<IncludeContext>>,
     current_chunk: String,
     current_chunk_first_line: u32,
 }
 
-impl<'a, 'b, 'c, IncludeContext> Scanner<'a, 'b, 'c, IncludeContext>
+impl<'input, 'provider, 'state, IncludeContext> Scanner<'input, 'provider, 'state, IncludeContext>
 where
     IncludeContext: Clone,
 {
     pub fn new(
-        input: &'a str,
+        input: &'input str,
         this_file: String,
-        prior_includes: &'c mut HashSet<String>,
-        include_provider: &'b mut dyn IncludeProvider<IncludeContext = IncludeContext>,
+        prior_includes: &'state mut HashSet<String>,
+        skip_includes: &'state mut HashSet<String>,
+        include_provider: &'provider mut dyn IncludeProvider<IncludeContext = IncludeContext>,
         include_context: IncludeContext,
-    ) -> Scanner<'a, 'b, 'c, IncludeContext> {
+    ) -> Scanner<'input, 'provider, 'state, IncludeContext> {
         Scanner {
             include_provider,
             include_context,
@@ -63,6 +67,7 @@ where
             .peekable(),
             this_file,
             prior_includes,
+            skip_includes,
             chunks: Vec::new(),
             current_chunk: String::new(),
             current_chunk_first_line: 1,
@@ -105,7 +110,7 @@ where
                     let _ = self.read_char();
                     let _ = self.read_char();
 
-                    self.input_iter = Self::skip_block_comment(self.input_iter.clone()).1;
+                    self.input_iter = skip_block_comment(self.input_iter.clone()).1;
                 }
             } else {
                 break;
@@ -134,29 +139,6 @@ where
         None
     }
 
-    fn skip_block_comment(
-        mut it: Peekable<LocationTracking<Chars<'a>>>,
-    ) -> (String, Peekable<LocationTracking<Chars<'a>>>) {
-        let mut s = String::new();
-
-        while let Some((_, c)) = it.next() {
-            if c == '*' {
-                s.push(' ');
-                if let Some(&(_, '/')) = it.peek() {
-                    let _ = it.next();
-                    s.push(' ');
-                    break;
-                }
-            } else if c == '\n' {
-                s.push('\n');
-            } else {
-                s.push(' ');
-            }
-        }
-
-        (s, it)
-    }
-
     fn skip_line(&mut self) {
         while let Some((_, c)) = self.read_char() {
             if c == '\n' {
@@ -172,65 +154,8 @@ where
 
     fn peek_preprocessor_ident(
         &mut self,
-    ) -> Option<(String, Peekable<LocationTracking<Chars<'a>>>)> {
-        let mut token = String::new();
-        let mut it = self.input_iter.clone();
-
-        while let Some(&(_, c)) = it.peek() {
-            if '\n' == c || '\r' == c {
-                break;
-            } else if c.is_alphabetic() {
-                let _ = it.next();
-                token.push(c);
-            } else if c.is_whitespace() {
-                if !token.is_empty() {
-                    // Already found some chars, and this ends the identifier
-                    break;
-                } else {
-                    // Still haven't found anything. Continue scanning.
-                    let _ = it.next();
-                }
-            } else if '\\' == c {
-                let _ = it.next();
-                let next = it.next();
-
-                if let Some((_, '\n')) = next {
-                    // Continue scanning on next line
-                    continue;
-                } else if let (Some((_, '\r')), Some(&(_, '\n'))) = (next, it.peek()) {
-                    // ditto, but Windows-special
-                    let _ = it.next();
-                    continue;
-                } else {
-                    // Unrecognized escape sequence. Abort.
-                    return None;
-                }
-            } else if '/' == c {
-                if !token.is_empty() {
-                    // Already found some chars, and this ends the identifier
-                    break;
-                }
-
-                let mut next_peek = it.clone();
-                let _ = next_peek.next();
-
-                if let Some(&(_, '*')) = next_peek.peek() {
-                    // Block comment. Skip it.
-                    let _ = it.next();
-                    let _ = it.next();
-
-                    it = Self::skip_block_comment(it).1;
-                } else {
-                    // Something other than a block comment. End the identifier.
-                    break;
-                }
-            } else {
-                // Some other character. This finishes the identifier.
-                break;
-            }
-        }
-
-        Some((token, it))
+    ) -> Option<(String, Peekable<LocationTracking<Chars<'input>>>)> {
+        peek_preprocessor_ident(self.input_iter.clone())
     }
 
     fn flush_current_chunk(&mut self) {
@@ -260,9 +185,21 @@ where
 
         self.flush_current_chunk();
 
-        let (child_code, child_include_context) = self
+        let child = self
             .include_provider
-            .get_include(path, &self.include_context)
+            .resolve_path(path, &self.include_context)
+            .map_err(|e| PrepperError::IncludeProviderError {
+                file: path.to_string(),
+                cause: e,
+            })?;
+
+        if self.skip_includes.contains(&child.resolved_path.0) {
+            return Ok(());
+        }
+
+        let child_code = self
+            .include_provider
+            .get_include(&child.resolved_path)
             .map_err(|e| PrepperError::IncludeProviderError {
                 file: path.to_string(),
                 cause: e,
@@ -273,10 +210,11 @@ where
         self.chunks.append(&mut {
             let mut child_scanner = Scanner::new(
                 &child_code,
-                path.to_string(),
+                child.resolved_path.0.to_string(),
                 self.prior_includes,
+                self.skip_includes,
                 self.include_provider,
-                child_include_context,
+                child.context,
             );
             child_scanner.process_input()?;
             child_scanner.chunks
@@ -296,7 +234,7 @@ where
                     if let Some(&(_, '*')) = next {
                         let _ = self.read_char();
                         self.current_chunk.push_str("  ");
-                        let (white, it) = Self::skip_block_comment(self.input_iter.clone());
+                        let (white, it) = skip_block_comment(self.input_iter.clone());
 
                         self.input_iter = it;
                         self.current_chunk.push_str(&white);
@@ -333,6 +271,20 @@ where
                                     line: c_line as usize,
                                 });
                             }
+                        } else if "pragma" == preprocessor_ident.0 {
+                            let next_ident = peek_preprocessor_ident(preprocessor_ident.1);
+
+                            match next_ident {
+                                Some((pragma_type, next_iter)) if pragma_type == "once" => {
+                                    self.input_iter = next_iter;
+                                    self.skip_whitespace_until_eol();
+
+                                    self.skip_includes.insert(self.this_file.clone());
+                                }
+                                _ => {
+                                    self.current_chunk.push(c);
+                                }
+                            }
                         } else {
                             self.current_chunk.push(c);
                         }
@@ -349,4 +301,89 @@ where
         self.flush_current_chunk();
         Ok(())
     }
+}
+
+fn skip_block_comment(
+    mut it: Peekable<LocationTracking<Chars<'_>>>,
+) -> (String, Peekable<LocationTracking<Chars<'_>>>) {
+    let mut s = String::new();
+
+    while let Some((_, c)) = it.next() {
+        if c == '*' {
+            s.push(' ');
+            if let Some(&(_, '/')) = it.peek() {
+                let _ = it.next();
+                s.push(' ');
+                break;
+            }
+        } else if c == '\n' {
+            s.push('\n');
+        } else {
+            s.push(' ');
+        }
+    }
+
+    (s, it)
+}
+
+fn peek_preprocessor_ident(
+    mut it: Peekable<LocationTracking<Chars<'_>>>,
+) -> Option<(String, Peekable<LocationTracking<Chars<'_>>>)> {
+    let mut token = String::new();
+
+    while let Some(&(_, c)) = it.peek() {
+        if '\n' == c || '\r' == c {
+            break;
+        } else if c.is_alphabetic() {
+            let _ = it.next();
+            token.push(c);
+        } else if c.is_whitespace() {
+            if !token.is_empty() {
+                // Already found some chars, and this ends the identifier
+                break;
+            } else {
+                // Still haven't found anything. Continue scanning.
+                let _ = it.next();
+            }
+        } else if '\\' == c {
+            let _ = it.next();
+            let next = it.next();
+
+            if let Some((_, '\n')) = next {
+                // Continue scanning on next line
+                continue;
+            } else if let (Some((_, '\r')), Some(&(_, '\n'))) = (next, it.peek()) {
+                // ditto, but Windows-special
+                let _ = it.next();
+                continue;
+            } else {
+                // Unrecognized escape sequence. Abort.
+                return None;
+            }
+        } else if '/' == c {
+            if !token.is_empty() {
+                // Already found some chars, and this ends the identifier
+                break;
+            }
+
+            let mut next_peek = it.clone();
+            let _ = next_peek.next();
+
+            if let Some(&(_, '*')) = next_peek.peek() {
+                // Block comment. Skip it.
+                let _ = it.next();
+                let _ = it.next();
+
+                it = skip_block_comment(it).1;
+            } else {
+                // Something other than a block comment. End the identifier.
+                break;
+            }
+        } else {
+            // Some other character. This finishes the identifier.
+            break;
+        }
+    }
+
+    Some((token, it))
 }
